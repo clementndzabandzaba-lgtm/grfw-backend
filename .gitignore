@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment — NEVER commit secrets
+.env
+.env.production
+.env.local
+
+# SQLite (no longer used — PostgreSQL now)
+*.db
+*.sqlite
+
+# Uploaded files — back these up separately, don't put in Git
+uploads/
+
+# IIS logs
+iisnode/
+
+# Utility / migration scripts — not needed on server
+check-tables.js
+migrate.js
+
+# OS
+.DS_Store
+Thumbs.db
