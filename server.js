@@ -8,6 +8,19 @@ const path    = require('path')
 const app  = express()
 const PORT = process.env.PORT || 5000
 
+// iisnode fix — IIS URL Rewrite passes the original URL in x-original-url header.
+// Without this, req.url arrives as '/server.js' for every request on SmarterASP.
+app.use((req, _res, next) => {
+  const orig = req.headers['x-original-url']
+  if (orig) {
+    try {
+      const parsed = new URL(orig, 'http://localhost')
+      req.url = parsed.pathname + (parsed.search || '')
+    } catch (_) {}
+  }
+  next()
+})
+
 // Middleware
 app.use(helmet({ contentSecurityPolicy: false }))
 const allowedOrigins = [
