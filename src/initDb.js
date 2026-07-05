@@ -71,7 +71,7 @@ async function initDb() {
   }
 
   // ── Content tables — simple id + JSON blob ────────────────────────────────
-  const contentTables = ['skills', 'news', 'publications', 'events', 'jobs', 'mentors', 'audit_logs']
+  const contentTables = ['skills', 'news', 'publications', 'events', 'jobs', 'mentors', 'audit_logs', 'approved_mentors', 'mentor_applications']
   for (const table of contentTables) {
     const sql = `
       CREATE TABLE IF NOT EXISTS "${table}" (
