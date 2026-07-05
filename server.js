@@ -77,9 +77,25 @@ app.get('/api/records', (_req, res) => {
   res.json({ success: true, data: [], pagination: { total: 0, page: 1, totalPages: 1 } })
 })
 
-// Health check
+// Health check — no database access, always responds if the process is alive
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'GRFW Portal API', timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok',
+    service: 'GRFW Portal API',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  })
+})
+
+// Deep health check — verifies the database connection is alive
+app.get('/health/db', async (_req, res) => {
+  try {
+    const pool = require('./src/db')
+    const { rows } = await pool.query('SELECT 1 AS alive')
+    res.json({ status: 'ok', db: 'connected', alive: rows[0].alive, timestamp: new Date().toISOString() })
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: 'unreachable', error: err.message, timestamp: new Date().toISOString() })
+  }
 })
 
 // 404
@@ -94,12 +110,41 @@ app.use((err, req, res, _next) => {
 })
 
 // ── Startup — load all data from PostgreSQL then start listening ───────────
+function ts() {
+  return new Date().toISOString()
+}
+
 async function start() {
-  console.log('\n  Loading data from PostgreSQL...')
+  console.log(`\n[${ts()}] [server] ── GRFW Backend starting ──`)
+  console.log(`[${ts()}] [server] PORT = ${PORT}`)
+
+  // Log DATABASE_URL presence and masked value so we can confirm the env var is set
+  if (process.env.DATABASE_URL) {
+    const masked = process.env.DATABASE_URL.replace(/:([^:@]+)@/, ':****@')
+    console.log(`[${ts()}] [server] DATABASE_URL = ${masked}`)
+  } else {
+    console.warn(`[${ts()}] [server] WARNING: DATABASE_URL is not set — falling back to individual DB_* vars`)
+    console.log(`[${ts()}] [server] DB_HOST=${process.env.DB_HOST || '(unset)'} DB_PORT=${process.env.DB_PORT || '(unset)'} DB_NAME=${process.env.DB_NAME || '(unset)'} DB_USER=${process.env.DB_USER || '(unset)'}`)
+  }
+
+  // Abort the whole startup if it takes longer than 60 s — prevents a silent hang
+  const startupTimeout = setTimeout(() => {
+    console.error(`[${ts()}] [server] FATAL: startup timed out after 60 s — database never responded`)
+    process.exit(1)
+  }, 60_000)
+  startupTimeout.unref() // don't keep the process alive on its own
+
   try {
+    console.log(`[${ts()}] [server] Step 1/3 — initDb()`)
     await initDb()
+    console.log(`[${ts()}] [server] Step 1/3 — initDb() complete`)
+
+    console.log(`[${ts()}] [server] Step 2/3 — authModule.init()`)
     // Auth must be first — other modules reference the users array via require('./auth')
     await authModule.init()
+    console.log(`[${ts()}] [server] Step 2/3 — authModule.init() complete`)
+
+    console.log(`[${ts()}] [server] Step 3/3 — loading all content modules`)
     await Promise.all([
       skillsMod.init(),
       newsMod.init(),
@@ -108,17 +153,35 @@ async function start() {
       jobsMod.init(),
       mentorsMod.init(),
     ])
-    console.log('  All data loaded from PostgreSQL ✓\n')
+    console.log(`[${ts()}] [server] Step 3/3 — all content modules loaded`)
+
+    clearTimeout(startupTimeout)
+    console.log(`[${ts()}] [server] All data loaded from PostgreSQL ✓\n`)
   } catch (err) {
-    console.error('  Failed to load data from PostgreSQL:', err.message)
+    clearTimeout(startupTimeout)
+    console.error(`[${ts()}] [server] FATAL: failed during startup initialisation`)
+    console.error(`[${ts()}] [server] Error: ${err.message}`)
+    console.error(err.stack)
     process.exit(1)
   }
 
   app.listen(PORT, () => {
-    console.log(` GRFW Portal API — http://localhost:${PORT}`)
-    console.log(` Health: http://localhost:${PORT}/health`)
-    console.log(` Super Admin: ${process.env.SUPER_ADMIN_EMAIL || 'superadmin@grfw.org'}\n`)
+    console.log(`[${ts()}] [server] GRFW Portal API — http://localhost:${PORT}`)
+    console.log(`[${ts()}] [server] Health: http://localhost:${PORT}/health`)
+    console.log(`[${ts()}] [server] Super Admin: ${process.env.SUPER_ADMIN_EMAIL || 'superadmin@grfw.org'}\n`)
   })
 }
+
+// Catch any unhandled promise rejections that escape the try/catch above
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`[${ts()}] [server] Unhandled promise rejection:`, reason)
+  if (reason && reason.stack) console.error(reason.stack)
+})
+
+process.on('uncaughtException', (err) => {
+  console.error(`[${ts()}] [server] Uncaught exception: ${err.message}`)
+  console.error(err.stack)
+  process.exit(1)
+})
 
 start()
