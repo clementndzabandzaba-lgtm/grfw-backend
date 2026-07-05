@@ -39,6 +39,7 @@ app.use('/uploads', (req, res, next) => {
 }, express.static(path.join(__dirname, 'uploads')))
 
 // ── Mount routes ─────────────────────────────────────────────────────────────
+const initDb        = require('./src/initDb')
 const authModule    = require('./src/routes/auth')
 const skillsMod     = require('./src/routes/skills')
 const newsMod       = require('./src/routes/news')
@@ -96,6 +97,7 @@ app.use((err, req, res, _next) => {
 async function start() {
   console.log('\n  Loading data from PostgreSQL...')
   try {
+    await initDb()
     // Auth must be first — other modules reference the users array via require('./auth')
     await authModule.init()
     await Promise.all([

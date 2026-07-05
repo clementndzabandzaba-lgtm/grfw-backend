@@ -1,14 +1,21 @@
 require('dotenv').config()
 const { Pool } = require('pg')
 
-const pool = new Pool({
-  host:     process.env.DB_HOST     || 'pg8001.site4now.net',
-  port:     parseInt(process.env.DB_PORT) || 6432,
-  database: process.env.DB_NAME     || 'db_acb7e8_grfw',
-  user:     process.env.DB_USER     || 'acb7e8_grfw',
-  password: process.env.DB_PASSWORD || 'Grfw@2026!',
-  max: 10,
-})
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? {
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      }
+    : {
+        host:     process.env.DB_HOST     || 'localhost',
+        port:     parseInt(process.env.DB_PORT) || 5432,
+        database: process.env.DB_NAME     || 'grfw',
+        user:     process.env.DB_USER     || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        max: 10,
+      }
+)
 
 pool.on('error', (err) => console.error('PostgreSQL pool error:', err.message))
 
