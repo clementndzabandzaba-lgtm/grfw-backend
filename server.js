@@ -23,13 +23,23 @@ app.use((req, _res, next) => {
 
 // Middleware
 app.use(helmet({ contentSecurityPolicy: false }))
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'https://grfw-frontend.vercel.app',
-  process.env.FRONTEND_URL,
-].filter(Boolean)
-app.use(cors({ origin: allowedOrigins, credentials: true }))
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server (no origin header), localhost dev, all *.vercel.app deployments,
+    // and any explicitly configured FRONTEND_URL.
+    if (
+      !origin ||
+      /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
+      origin.endsWith('.vercel.app') ||
+      (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
+    ) {
+      return callback(null, true)
+    }
+    callback(new Error(`CORS: origin not allowed — ${origin}`))
+  },
+  credentials: true,
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: false }))  // PayFast ITN posts form-encoded data
 app.use(morgan('dev'))
