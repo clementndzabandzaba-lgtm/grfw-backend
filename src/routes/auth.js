@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid')
 const { requireAuth, JWT_SECRET } = require('../middleware/auth')
 const { logAction }    = require('../utils/auditLog')
 const { sendResetCode } = require('../utils/email')
+const { buildPaymentData, verifyItn } = require('../utils/payfast')
 const userRepo = require('../repositories/userRepo')
 
 // Shared in-memory user store — write-through cache backed by PostgreSQL.
@@ -29,8 +30,9 @@ async function seedSuperAdmin() {
       id: 'sa-001', name, email,
       role: 'super_admin',
       password: await bcrypt.hash(password, 12),
-      country: 'Kenya', isVerified: true, status: 'active',
-      avatar: null, isSubscribed: false, subscriptionPlan: null, subscriptionExpiry: null,
+      country: 'South Africa', isVerified: true, status: 'active',
+      avatar: null, isSubscribed: true, subscriptionPlan: null, subscriptionExpiry: null,
+      widowhoodCategory: null, registrationFeePaid: true,
       createdAt: new Date().toISOString(),
     }
     users.push(superAdmin)
@@ -38,6 +40,29 @@ async function seedSuperAdmin() {
     console.log(`\n  Super Admin seeded: ${email}`)
   }
 }
+
+// ── Widowhood fee tables (ZAR) ────────────────────────────────────────────────
+const REGISTRATION_FEES = {
+  new_to_widowhood: 50,
+  mid_widowhood:    100,
+  established:      150,
+}
+const SUBSCRIPTION_FEES = {
+  new_to_widowhood: 30,
+  mid_widowhood:    60,
+  established:      99,
+}
+const CATEGORY_LABELS = {
+  new_to_widowhood: 'New to Widowhood (0–12 months)',
+  mid_widowhood:    'Mid Widowhood (1–3 years)',
+  established:      'Established (3+ years)',
+}
+
+function registrationFee(category) { return REGISTRATION_FEES[category] || REGISTRATION_FEES.established }
+function subscriptionFee(category) { return SUBSCRIPTION_FEES[category] || SUBSCRIPTION_FEES.established }
+
+const FRONTEND_URL = () => process.env.FRONTEND_URL || 'https://grfw-frontend.vercel.app'
+const BACKEND_URL  = () => process.env.BACKEND_URL  || 'https://grfw-backend-production.up.railway.app'
 
 const sign = (user) => jwt.sign(
   { id: user.id, email: user.email, role: user.role, name: user.name },
@@ -49,9 +74,11 @@ const safeUser = (u) => ({
   id: u.id, name: u.name, email: u.email, role: u.role,
   country: u.country, isVerified: u.isVerified, status: u.status,
   avatar: u.avatar || null, createdAt: u.createdAt,
-  isSubscribed:       u.isSubscribed       || false,
-  subscriptionPlan:   u.subscriptionPlan   || null,
-  subscriptionExpiry: u.subscriptionExpiry || null,
+  isSubscribed:         u.isSubscribed         || false,
+  subscriptionPlan:     u.subscriptionPlan     || null,
+  subscriptionExpiry:   u.subscriptionExpiry   || null,
+  widowhoodCategory:    u.widowhoodCategory    || null,
+  registrationFeePaid:  !!u.registrationFeePaid,
 })
 
 // POST /api/auth/login
@@ -65,17 +92,27 @@ router.post('/login', async (req, res) => {
   const passwordMatch = await bcrypt.compare(password, user.password)
   if (!passwordMatch) return res.status(401).json({ success: false, error: 'Invalid email or password.' })
 
-  if (user.status === 'pending_admin') return res.status(403).json({ success: false, error: 'Your account is pending approval by a GRFW administrator.', code: 'PENDING_ADMIN' })
+  if (user.status === 'pending_payment') {
+    return res.status(403).json({
+      success: false,
+      error: 'Your registration fee has not been paid. Complete payment to activate your account.',
+      code: 'PENDING_PAYMENT',
+      userId: user.id,
+      widowhoodCategory: user.widowhoodCategory,
+      amount: registrationFee(user.widowhoodCategory),
+    })
+  }
+  if (user.status === 'pending_admin')      return res.status(403).json({ success: false, error: 'Your account is pending approval by a GRFW administrator.', code: 'PENDING_ADMIN' })
   if (user.status === 'pending_superadmin') return res.status(403).json({ success: false, error: 'Your admin account request is pending approval by GRFW leadership.', code: 'PENDING_SUPERADMIN' })
-  if (user.status === 'rejected')  return res.status(403).json({ success: false, error: 'Your account was not approved.', code: 'REJECTED' })
-  if (user.status === 'suspended') return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact GRFW support.', code: 'SUSPENDED' })
+  if (user.status === 'rejected')           return res.status(403).json({ success: false, error: 'Your account was not approved.', code: 'REJECTED' })
+  if (user.status === 'suspended')          return res.status(403).json({ success: false, error: 'Your account has been suspended. Please contact GRFW support.', code: 'SUSPENDED' })
 
   res.json({ success: true, data: { token: sign(user), user: safeUser(user) } })
 })
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { name, email, password, country, role, avatar, profile } = req.body
+  const { name, email, password, country, role, avatar, profile, widowhoodCategory } = req.body
   if (!name || !email || !password) return res.status(400).json({ success: false, error: 'Name, email, and password are required.' })
   if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' })
   if (users.find((u) => u.email.toLowerCase() === email.toLowerCase())) {
@@ -83,7 +120,11 @@ router.post('/register', async (req, res) => {
   }
 
   const requestedRole = role === 'admin' ? 'admin' : 'member'
-  const status = requestedRole === 'admin' ? 'pending_superadmin' : 'pending_admin'
+  const validCategory = ['new_to_widowhood', 'mid_widowhood', 'established'].includes(widowhoodCategory)
+    ? widowhoodCategory : 'established'
+
+  // Admins go to pending_superadmin; members must pay before activation
+  const status = requestedRole === 'admin' ? 'pending_superadmin' : 'pending_payment'
 
   const newUser = {
     id: uuidv4(), name: name.trim(), email: email.toLowerCase().trim(),
@@ -91,17 +132,28 @@ router.post('/register', async (req, res) => {
     country: country || 'Unknown', isVerified: false, status,
     avatar: avatar || null, profile: profile || {},
     isSubscribed: false, subscriptionPlan: null, subscriptionExpiry: null,
+    widowhoodCategory: requestedRole === 'member' ? validCategory : null,
+    registrationFeePaid: requestedRole === 'admin',  // admins skip payment
     createdAt: new Date().toISOString(),
   }
   users.push(newUser)
   await userRepo.insert(newUser).catch((err) => console.error('DB insert failed:', err.message))
 
+  const fee = requestedRole === 'member' ? registrationFee(validCategory) : 0
+
   res.status(201).json({
     success: true,
     message: requestedRole === 'admin'
       ? 'Your admin request has been submitted and is awaiting super admin approval.'
-      : 'Your account has been created and is awaiting admin approval.',
-    data: { status, role: requestedRole },
+      : 'Account created. Please pay the registration fee to activate your account.',
+    data: {
+      userId: newUser.id,
+      status,
+      role: requestedRole,
+      widowhoodCategory: newUser.widowhoodCategory,
+      registrationFee: fee,
+      categoryLabel: CATEGORY_LABELS[validCategory] || '',
+    },
   })
 })
 
@@ -186,19 +238,23 @@ router.patch('/members/:id/status', requireAuth, async (req, res) => {
 router.post('/admin/add-user', requireAuth, async (req, res) => {
   const caller = users.find((u) => u.id === req.user.id)
   if (!caller || !['admin', 'super_admin'].includes(caller.role)) return res.status(403).json({ success: false, error: 'Insufficient permissions.' })
-  const { name, email, password, role } = req.body
+  const { name, email, password, role, widowhoodCategory } = req.body
   if (!name || !email || !password) return res.status(400).json({ success: false, error: 'Name, email, and password are required.' })
   if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' })
   const requestedRole = ['member', 'admin'].includes(role) ? role : 'member'
   if (users.find((u) => u.email.toLowerCase() === email.toLowerCase())) return res.status(409).json({ success: false, error: 'An account with that email already exists.' })
 
+  const validCategory = ['new_to_widowhood', 'mid_widowhood', 'established'].includes(widowhoodCategory) ? widowhoodCategory : 'established'
   const status = requestedRole === 'admin' ? 'pending_admin' : 'active'
+
   const newUser = {
     id: uuidv4(), name: name.trim(), email: email.toLowerCase().trim(),
     role: requestedRole, password: await bcrypt.hash(password, 12),
     country: req.body.country || '', isVerified: true, status,
     avatar: null, profile: {},
     isSubscribed: false, subscriptionPlan: null, subscriptionExpiry: null,
+    widowhoodCategory: requestedRole === 'member' ? validCategory : null,
+    registrationFeePaid: true,  // admin-created accounts skip payment
     createdAt: new Date().toISOString(), addedBy: caller.name,
   }
   users.push(newUser)
@@ -247,8 +303,8 @@ router.get('/admin-stats', requireAuth, (req, res) => {
   const caller = users.find((u) => u.id === req.user.id)
   if (!caller || !['admin', 'super_admin'].includes(caller.role)) return res.status(403).json({ success: false, error: 'Insufficient permissions.' })
 
-  const pendingMembers  = users.filter((u) => u.status === 'pending_admin').map(safeUser)
-  const activeMembers   = users.filter((u) => u.role === 'member' && u.status === 'active')
+  const pendingMembers   = users.filter((u) => u.status === 'pending_admin').map(safeUser)
+  const activeMembers    = users.filter((u) => u.role === 'member' && u.status === 'active')
   const recentlyApproved = [...activeMembers].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5).map(safeUser)
 
   const { jobs }         = require('./jobs')
@@ -272,12 +328,7 @@ router.get('/admin-stats', requireAuth, (req, res) => {
   })
 })
 
-// ── Subscriptions ─────────────────────────────────────────────────────────────
-
-const PLANS = {
-  monthly: { name: 'Monthly', price: 9.99,  months: 1,  label: '$9.99/month' },
-  annual:  { name: 'Annual',  price: 89.99, months: 12, label: '$89.99/year (save 25%)' },
-}
+// ── Subscriptions (ZAR, category-based) ──────────────────────────────────────
 
 router.get('/subscription', requireAuth, (req, res) => {
   const user = users.find((u) => u.id === req.user.id)
@@ -288,28 +339,116 @@ router.get('/subscription', requireAuth, (req, res) => {
     user.isSubscribed = false; user.subscriptionPlan = null
     userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
   }
-  res.json({ success: true, data: { isSubscribed: isActive, subscriptionPlan: user.subscriptionPlan, subscriptionExpiry: user.subscriptionExpiry, daysRemaining: isActive ? Math.ceil((new Date(user.subscriptionExpiry) - now) / (1000 * 60 * 60 * 24)) : 0 } })
+  const monthlyFee = subscriptionFee(user.widowhoodCategory)
+  res.json({
+    success: true,
+    data: {
+      isSubscribed: isActive,
+      subscriptionPlan:   user.subscriptionPlan,
+      subscriptionExpiry: user.subscriptionExpiry,
+      widowhoodCategory:  user.widowhoodCategory,
+      monthlyFee,
+      daysRemaining: isActive ? Math.ceil((new Date(user.subscriptionExpiry) - now) / (1000 * 60 * 60 * 24)) : 0,
+    },
+  })
 })
 
-router.post('/subscribe', requireAuth, async (req, res) => {
-  const { plan } = req.body
-  if (!PLANS[plan]) return res.status(400).json({ success: false, error: 'Invalid plan. Choose "monthly" or "annual".' })
+// POST /api/auth/payfast/initiate-subscription — generate PayFast payment fields
+router.post('/payfast/initiate-subscription', requireAuth, async (req, res) => {
   const user = users.find((u) => u.id === req.user.id)
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
-  const selectedPlan = PLANS[plan]
-  const expiry = new Date()
-  expiry.setMonth(expiry.getMonth() + selectedPlan.months)
-  user.isSubscribed = true; user.subscriptionPlan = plan; user.subscriptionExpiry = expiry.toISOString()
-  await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
-  res.json({ success: true, message: `${selectedPlan.name} subscription activated!`, data: { plan, expiry: expiry.toISOString(), label: selectedPlan.label } })
+  if (!['member'].includes(user.role)) return res.status(403).json({ success: false, error: 'Subscriptions are for member accounts only.' })
+
+  const amount = subscriptionFee(user.widowhoodCategory)
+  const { fields, url } = buildPaymentData({
+    paymentId:  `sub-${user.id}-${Date.now()}`,
+    name:       user.name,
+    email:      user.email,
+    amount,
+    itemName:   'GRFW Monthly Subscription',
+    itemDesc:   `${CATEGORY_LABELS[user.widowhoodCategory] || 'Member'} — R${amount}/month`,
+    returnUrl:  `${FRONTEND_URL()}/subscribe/success`,
+    cancelUrl:  `${FRONTEND_URL()}/subscribe`,
+    notifyUrl:  `${BACKEND_URL()}/api/auth/payfast/subscription-itn`,
+    customStr1: user.id,
+  })
+  res.json({ success: true, data: { fields, url, amount } })
 })
 
+// POST /api/auth/payfast/subscription-itn — PayFast ITN webhook
+router.post('/payfast/subscription-itn', async (req, res) => {
+  res.sendStatus(200)  // acknowledge immediately
+  try {
+    if (!verifyItn(req.body)) { console.warn('PayFast sub ITN signature mismatch'); return }
+    if (req.body.payment_status !== 'COMPLETE') return
+
+    const userId = req.body.custom_str1
+    const user   = users.find((u) => u.id === userId)
+    if (!user) return
+
+    const expiry = new Date()
+    expiry.setMonth(expiry.getMonth() + 1)
+    user.isSubscribed       = true
+    user.subscriptionPlan   = 'monthly'
+    user.subscriptionExpiry = expiry.toISOString()
+    await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
+    console.log(`  Subscription activated for ${user.email}`)
+  } catch (err) { console.error('Subscription ITN error:', err.message) }
+})
+
+// POST /api/auth/cancel-subscription
 router.post('/cancel-subscription', requireAuth, async (req, res) => {
   const user = users.find((u) => u.id === req.user.id)
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
   user.isSubscribed = false; user.subscriptionPlan = null; user.subscriptionExpiry = null
   await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
   res.json({ success: true, message: 'Subscription cancelled. You can re-subscribe at any time.' })
+})
+
+// ── Registration PayFast routes ───────────────────────────────────────────────
+
+// POST /api/auth/payfast/initiate-registration
+router.post('/payfast/initiate-registration', async (req, res) => {
+  const { userId } = req.body
+  if (!userId) return res.status(400).json({ success: false, error: 'userId is required.' })
+  const user = users.find((u) => u.id === userId)
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
+  if (user.registrationFeePaid) return res.status(400).json({ success: false, error: 'Registration fee already paid.' })
+
+  const amount = registrationFee(user.widowhoodCategory)
+  const { fields, url } = buildPaymentData({
+    paymentId:  `reg-${user.id}`,
+    name:       user.name,
+    email:      user.email,
+    amount,
+    itemName:   'GRFW Registration Fee',
+    itemDesc:   `${CATEGORY_LABELS[user.widowhoodCategory] || 'Member'} — one-time R${amount}`,
+    returnUrl:  `${FRONTEND_URL()}/auth/payment-success`,
+    cancelUrl:  `${FRONTEND_URL()}/auth/register`,
+    notifyUrl:  `${BACKEND_URL()}/api/auth/payfast/registration-itn`,
+    customStr1: user.id,
+  })
+  res.json({ success: true, data: { fields, url, amount } })
+})
+
+// POST /api/auth/payfast/registration-itn — PayFast webhook activates account
+router.post('/payfast/registration-itn', async (req, res) => {
+  res.sendStatus(200)  // acknowledge immediately
+  try {
+    if (!verifyItn(req.body)) { console.warn('PayFast reg ITN signature mismatch'); return }
+    if (req.body.payment_status !== 'COMPLETE') return
+
+    const userId = req.body.custom_str1
+    const user   = users.find((u) => u.id === userId)
+    if (!user) return
+
+    user.status              = 'active'
+    user.registrationFeePaid = true
+    user.isVerified          = true
+    await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
+    logAction({ actorName: 'PayFast', actorId: 'system', actorRole: 'system', action: 'REGISTRATION_PAID', target: `${user.name} (${user.email})`, risk: 'low' })
+    console.log(`  Account activated after payment: ${user.email}`)
+  } catch (err) { console.error('Registration ITN error:', err.message) }
 })
 
 // ── Password Reset ────────────────────────────────────────────────────────────

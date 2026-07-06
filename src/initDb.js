@@ -42,22 +42,24 @@ async function initDb() {
   // ── Users table ───────────────────────────────────────────────────────────
   const createUsersSQL = `
     CREATE TABLE IF NOT EXISTS users (
-      id                   TEXT PRIMARY KEY,
-      name                 TEXT NOT NULL,
-      email                TEXT NOT NULL,
-      role                 TEXT NOT NULL DEFAULT 'member',
-      password             TEXT NOT NULL,
-      country              TEXT,
-      "isVerified"         INTEGER NOT NULL DEFAULT 0,
-      status               TEXT NOT NULL DEFAULT 'pending',
-      avatar               TEXT,
-      profile              TEXT,
-      "isSubscribed"       INTEGER NOT NULL DEFAULT 0,
-      "subscriptionPlan"   TEXT,
-      "subscriptionExpiry" TEXT,
-      "rejectionReason"    TEXT,
-      "createdAt"          TEXT NOT NULL,
-      "updatedAt"          TEXT
+      id                    TEXT PRIMARY KEY,
+      name                  TEXT NOT NULL,
+      email                 TEXT NOT NULL,
+      role                  TEXT NOT NULL DEFAULT 'member',
+      password              TEXT NOT NULL,
+      country               TEXT,
+      "isVerified"          INTEGER NOT NULL DEFAULT 0,
+      status                TEXT NOT NULL DEFAULT 'pending_payment',
+      avatar                TEXT,
+      profile               TEXT,
+      "isSubscribed"        INTEGER NOT NULL DEFAULT 0,
+      "subscriptionPlan"    TEXT,
+      "subscriptionExpiry"  TEXT,
+      "rejectionReason"     TEXT,
+      "widowhoodCategory"   TEXT DEFAULT 'established',
+      "registrationFeePaid" INTEGER NOT NULL DEFAULT 0,
+      "createdAt"           TEXT NOT NULL,
+      "updatedAt"           TEXT
     )
   `
   console.log(`[${ts()}] [initDb] Creating users table (if not exists)`)
@@ -69,6 +71,10 @@ async function initDb() {
     console.error(err.stack)
     throw err
   }
+
+  // Migrate existing tables — add new columns if they don't exist yet
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "widowhoodCategory" TEXT DEFAULT 'established'`)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "registrationFeePaid" INTEGER NOT NULL DEFAULT 0`)
 
   // ── Content tables — simple id + JSON blob ────────────────────────────────
   const contentTables = ['skills', 'news', 'publications', 'events', 'jobs', 'mentors', 'audit_logs', 'approved_mentors', 'mentor_applications']

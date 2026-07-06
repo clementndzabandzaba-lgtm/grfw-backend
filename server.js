@@ -30,6 +30,7 @@ const allowedOrigins = [
 ].filter(Boolean)
 app.use(cors({ origin: allowedOrigins, credentials: true }))
 app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: false }))  // PayFast ITN posts form-encoded data
 app.use(morgan('dev'))
 
 // Serve uploaded files — allow cross-origin so the frontend can load images/PDFs from backend
@@ -65,11 +66,37 @@ app.post('/api/newsletter/subscribe', (req, res) => {
   res.json({ success: true, message: 'Subscribed successfully!' })
 })
 
-// Donations
+// Donations — initiate PayFast payment
 app.post('/api/finance/donate', (req, res) => {
-  const { amount } = req.body
-  if (!amount || amount < 1) return res.status(400).json({ success: false, error: 'Valid amount required' })
-  res.json({ success: true, message: `Thank you for your donation of $${amount}!` })
+  const { amount, name, email, recurring } = req.body
+  if (!amount || amount < 1) return res.status(400).json({ success: false, error: 'Valid amount required.' })
+
+  const { buildPaymentData } = require('./src/utils/payfast')
+  const frontendUrl = process.env.FRONTEND_URL || 'https://grfw-frontend.vercel.app'
+  const backendUrl  = process.env.BACKEND_URL  || 'https://grfw-backend-production.up.railway.app'
+
+  const { fields, url } = buildPaymentData({
+    paymentId:  `don-${Date.now()}`,
+    name:       name || 'Anonymous Donor',
+    email:      email || 'donor@grfw.org',
+    amount,
+    itemName:   `GRFW Donation${recurring ? ' (Monthly)' : ''}`,
+    itemDesc:   'Supporting widows and widowers through GRFW',
+    returnUrl:  `${frontendUrl}/donate/thank-you`,
+    cancelUrl:  `${frontendUrl}/donate`,
+    notifyUrl:  `${backendUrl}/api/finance/donation-itn`,
+  })
+  res.json({ success: true, data: { fields, url } })
+})
+
+// Donation ITN — log received payment
+app.post('/api/finance/donation-itn', (req, res) => {
+  res.sendStatus(200)
+  const { verifyItn } = require('./src/utils/payfast')
+  if (!verifyItn(req.body)) { console.warn('Donation ITN signature mismatch'); return }
+  if (req.body.payment_status === 'COMPLETE') {
+    console.log(`  Donation received: R${req.body.amount_gross} from ${req.body.email_address}`)
+  }
 })
 
 // Records
