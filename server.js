@@ -26,7 +26,8 @@ app.use(helmet({ contentSecurityPolicy: false }))
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
-  process.env.FRONTEND_URL || 'https://grfwportal.net',
+  'https://grfw-frontend.vercel.app',
+  process.env.FRONTEND_URL,
 ].filter(Boolean)
 app.use(cors({ origin: allowedOrigins, credentials: true }))
 app.use(express.json({ limit: '10mb' }))
