@@ -41,7 +41,7 @@ async function seedSuperAdmin() {
   }
 }
 
-// ── Widowhood fee tables (ZAR) ────────────────────────────────────────────────
+// ── Widowhood fee tables (USD — displayed with $ sign) ───────────────────────
 const REGISTRATION_FEES = {
   new_to_widowhood: 50,
   mid_widowhood:    100,
@@ -442,12 +442,12 @@ router.post('/payfast/registration-itn', async (req, res) => {
     const user   = users.find((u) => u.id === userId)
     if (!user) return
 
-    user.status              = 'active'
+    user.status              = 'pending_admin'  // payment confirmed — now awaits admin approval
     user.registrationFeePaid = true
     user.isVerified          = true
     await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
     logAction({ actorName: 'PayFast', actorId: 'system', actorRole: 'system', action: 'REGISTRATION_PAID', target: `${user.name} (${user.email})`, risk: 'low' })
-    console.log(`  Account activated after payment: ${user.email}`)
+    console.log(`  Registration fee paid — pending admin approval: ${user.email}`)
   } catch (err) { console.error('Registration ITN error:', err.message) }
 })
 
