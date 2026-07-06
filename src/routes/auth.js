@@ -38,6 +38,16 @@ async function seedSuperAdmin() {
     users.push(superAdmin)
     await userRepo.insert(superAdmin)
     console.log(`\n  Super Admin seeded: ${email}`)
+  } else {
+    // Always ensure the super admin stays active and has correct flags
+    let changed = false
+    if (existing.status !== 'active')           { existing.status = 'active'; changed = true }
+    if (!existing.registrationFeePaid)           { existing.registrationFeePaid = true; changed = true }
+    if (existing.role !== 'super_admin')         { existing.role = 'super_admin'; changed = true }
+    if (changed) {
+      await userRepo.update(existing)
+      console.log(`  Super Admin record corrected in DB: ${email}`)
+    }
   }
 }
 
@@ -137,7 +147,14 @@ router.post('/register', async (req, res) => {
     createdAt: new Date().toISOString(),
   }
   users.push(newUser)
-  await userRepo.insert(newUser).catch((err) => console.error('DB insert failed:', err.message))
+  try {
+    await userRepo.insert(newUser)
+  } catch (err) {
+    console.error('DB insert failed during register:', err.message, err.stack)
+    // Remove from in-memory so state doesn't diverge from DB
+    users.splice(users.indexOf(newUser), 1)
+    return res.status(500).json({ success: false, error: 'Account could not be created. Please try again.' })
+  }
 
   const fee = requestedRole === 'member' ? registrationFee(validCategory) : 0
 
@@ -193,7 +210,12 @@ router.patch('/approve/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ success: false, error: 'You do not have permission to approve this account.' })
   }
 
-  await userRepo.update(target).catch((err) => console.error('DB update failed:', err.message))
+  try {
+    await userRepo.update(target)
+  } catch (err) {
+    console.error('DB update failed during approve:', err.message, err.stack)
+    return res.status(500).json({ success: false, error: 'Approval could not be saved to database. Please try again.' })
+  }
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: target.role === 'admin' ? 'APPROVED_ADMIN' : 'APPROVED_MEMBER', target: `${target.name} (${target.email})`, risk: target.role === 'admin' ? 'high' : 'low' })
   res.json({ success: true, message: `${target.name}'s account has been approved.`, data: safeUser(target) })
 })
@@ -207,7 +229,12 @@ router.patch('/reject/:id', requireAuth, async (req, res) => {
 
   target.status = 'rejected'
   target.rejectionReason = req.body.reason || 'Application not approved.'
-  await userRepo.update(target).catch((err) => console.error('DB update failed:', err.message))
+  try {
+    await userRepo.update(target)
+  } catch (err) {
+    console.error('DB update failed during reject:', err.message, err.stack)
+    return res.status(500).json({ success: false, error: 'Rejection could not be saved. Please try again.' })
+  }
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: target.role === 'admin' ? 'REJECTED_ADMIN' : 'REJECTED_MEMBER', target: `${target.name} (${target.email})`, risk: 'medium' })
   res.json({ success: true, message: `${target.name}'s account has been rejected.` })
 })
@@ -258,7 +285,13 @@ router.post('/admin/add-user', requireAuth, async (req, res) => {
     createdAt: new Date().toISOString(), addedBy: caller.name,
   }
   users.push(newUser)
-  await userRepo.insert(newUser).catch((err) => console.error('DB insert failed:', err.message))
+  try {
+    await userRepo.insert(newUser)
+  } catch (err) {
+    console.error('DB insert failed during admin/add-user:', err.message, err.stack)
+    users.splice(users.indexOf(newUser), 1)
+    return res.status(500).json({ success: false, error: 'Account could not be saved to database. Please try again.' })
+  }
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: `CREATED_${requestedRole.toUpperCase()}`, target: `${newUser.name} (${newUser.email}) — status: ${status}`, risk: requestedRole === 'admin' ? 'high' : 'low' })
   res.status(201).json({
     success: true,
