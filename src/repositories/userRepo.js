@@ -13,27 +13,43 @@ function rowToUser(row) {
   }
 }
 
-// $1–$16 unchanged; $17 = widowhoodCategory, $18 = registrationFeePaid
-function userToParams(u) {
+// INSERT params — 18 values including createdAt ($15) and updatedAt ($16)
+function insertParams(u) {
   return [
-    u.id,
-    u.name,
-    u.email,
-    u.role,
-    u.password,
-    u.country               || null,
-    u.isVerified            ? 1 : 0,
+    u.id, u.name, u.email, u.role, u.password,
+    u.country             || null,
+    u.isVerified          ? 1 : 0,
     u.status,
-    u.avatar                || null,
+    u.avatar              || null,
     JSON.stringify(u.profile || {}),
-    u.isSubscribed          ? 1 : 0,
-    u.subscriptionPlan      || null,
-    u.subscriptionExpiry    || null,
-    u.rejectionReason       || null,
-    u.createdAt,
-    u.updatedAt             || u.createdAt,
-    u.widowhoodCategory     || null,
-    u.registrationFeePaid   ? 1 : 0,
+    u.isSubscribed        ? 1 : 0,
+    u.subscriptionPlan    || null,
+    u.subscriptionExpiry  || null,
+    u.rejectionReason     || null,
+    u.createdAt,                      // $15
+    u.updatedAt           || u.createdAt, // $16
+    u.widowhoodCategory   || null,    // $17
+    u.registrationFeePaid ? 1 : 0,    // $18
+  ]
+}
+
+// UPDATE params — 17 values, no gap (createdAt is never updated)
+// $1=id  $2=name … $14=rejectionReason  $15=updatedAt  $16=widowhoodCategory  $17=registrationFeePaid
+function updateParams(u, updatedAt) {
+  return [
+    u.id, u.name, u.email, u.role, u.password,
+    u.country             || null,
+    u.isVerified          ? 1 : 0,
+    u.status,
+    u.avatar              || null,
+    JSON.stringify(u.profile || {}),
+    u.isSubscribed        ? 1 : 0,
+    u.subscriptionPlan    || null,
+    u.subscriptionExpiry  || null,
+    u.rejectionReason     || null,
+    updatedAt,                        // $15
+    u.widowhoodCategory   || null,    // $16
+    u.registrationFeePaid ? 1 : 0,    // $17
   ]
 }
 
@@ -51,7 +67,7 @@ async function insert(user) {
         "createdAt", "updatedAt", "widowhoodCategory", "registrationFeePaid")
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (id) DO NOTHING`,
-    userToParams(user)
+    insertParams(user)
   )
 }
 
@@ -62,10 +78,10 @@ async function update(user) {
        name=$2, email=$3, role=$4, password=$5, country=$6,
        "isVerified"=$7, status=$8, avatar=$9, profile=$10,
        "isSubscribed"=$11, "subscriptionPlan"=$12, "subscriptionExpiry"=$13,
-       "rejectionReason"=$14, "updatedAt"=$16,
-       "widowhoodCategory"=$17, "registrationFeePaid"=$18
+       "rejectionReason"=$14, "updatedAt"=$15,
+       "widowhoodCategory"=$16, "registrationFeePaid"=$17
      WHERE id=$1`,
-    userToParams({ ...user, updatedAt })
+    updateParams(user, updatedAt)
   )
 }
 
