@@ -243,7 +243,7 @@ router.patch('/reject/:id', requireAuth, async (req, res) => {
 router.get('/all', requireAuth, (req, res) => {
   const caller = users.find((u) => u.id === req.user.id)
   if (!caller || !['admin', 'super_admin'].includes(caller.role)) return res.status(403).json({ success: false, error: 'Insufficient permissions.' })
-  res.json({ success: true, data: users.map(safeUser) })
+  res.json({ success: true, data: users.filter((u) => u.role !== 'super_admin').map(safeUser) })
 })
 
 // PATCH /api/auth/members/:id/status
