@@ -79,6 +79,21 @@ app.use('/api/jobs',       jobsMod.router)
 app.use('/api/mentors',    mentorsMod.router)
 app.use('/api/superadmin', superadminMod)
 
+// Contact form — forwards submission to grfwportal@gmail.com
+app.post('/api/contact', async (req, res) => {
+  const { name, email, country, subject, message } = req.body
+  if (!name || !email || !subject || !message) {
+    return res.status(400).json({ success: false, error: 'Name, email, subject, and message are required.' })
+  }
+  const { sendContactEmail } = require('./src/utils/email')
+  const result = await sendContactEmail({ name, email, country, subject, message })
+  if (result.sent) {
+    return res.json({ success: true, message: 'Message received — we will reply within 2 business days.' })
+  }
+  // Still acknowledge even if email fails (logs show the submission server-side)
+  res.json({ success: true, message: 'Message received — we will reply within 2 business days.' })
+})
+
 // Newsletter
 app.post('/api/newsletter/subscribe', (req, res) => {
   const { email } = req.body
