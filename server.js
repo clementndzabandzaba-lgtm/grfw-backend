@@ -50,6 +50,15 @@ app.use('/uploads', (req, res, next) => {
   next()
 }, express.static(path.join(__dirname, 'uploads')))
 
+// ── DB-ready gate — must be registered BEFORE API routes ─────────────────────
+// The server binds to the port immediately so Railway's health check passes,
+// but API calls return 503 until the database has finished loading.
+let dbReady = false
+app.use('/api', (req, res, next) => {
+  if (!dbReady) return res.status(503).json({ success: false, error: 'Server is starting up — please retry in a few seconds.' })
+  next()
+})
+
 // ── Mount routes ─────────────────────────────────────────────────────────────
 const initDb        = require('./src/initDb')
 const authModule    = require('./src/routes/auth')
@@ -156,33 +165,37 @@ async function start() {
   console.log(`\n[${ts()}] [server] ── GRFW Backend starting ──`)
   console.log(`[${ts()}] [server] PORT = ${PORT}`)
 
-  // Log DATABASE_URL presence and masked value so we can confirm the env var is set
   if (process.env.DATABASE_URL) {
     const masked = process.env.DATABASE_URL.replace(/:([^:@]+)@/, ':****@')
     console.log(`[${ts()}] [server] DATABASE_URL = ${masked}`)
   } else {
-    console.warn(`[${ts()}] [server] WARNING: DATABASE_URL is not set — falling back to individual DB_* vars`)
-    console.log(`[${ts()}] [server] DB_HOST=${process.env.DB_HOST || '(unset)'} DB_PORT=${process.env.DB_PORT || '(unset)'} DB_NAME=${process.env.DB_NAME || '(unset)'} DB_USER=${process.env.DB_USER || '(unset)'}`)
+    console.warn(`[${ts()}] [server] WARNING: DATABASE_URL is not set`)
   }
 
-  // Abort the whole startup if it takes longer than 60 s — prevents a silent hang
-  const startupTimeout = setTimeout(() => {
-    console.error(`[${ts()}] [server] FATAL: startup timed out after 60 s — database never responded`)
-    process.exit(1)
-  }, 60_000)
-  startupTimeout.unref() // don't keep the process alive on its own
+  // Bind to port FIRST so Railway's health check passes immediately.
+  // Database initialisation runs after — APIs return 503 until ready.
+  let dbReady = false
+  app.use('/api', (req, res, next) => {
+    if (!dbReady) return res.status(503).json({ success: false, error: 'Server starting up, please retry in a few seconds.' })
+    next()
+  })
 
+  await new Promise((resolve) => {
+    app.listen(PORT, () => {
+      console.log(`[${ts()}] [server] Listening on port ${PORT} — initialising database...`)
+      resolve()
+    })
+  })
+
+  // Now initialise the database in the background
   try {
     console.log(`[${ts()}] [server] Step 1/3 — initDb()`)
     await initDb()
-    console.log(`[${ts()}] [server] Step 1/3 — initDb() complete`)
 
     console.log(`[${ts()}] [server] Step 2/3 — authModule.init()`)
-    // Auth must be first — other modules reference the users array via require('./auth')
     await authModule.init()
-    console.log(`[${ts()}] [server] Step 2/3 — authModule.init() complete`)
 
-    console.log(`[${ts()}] [server] Step 3/3 — loading all content modules`)
+    console.log(`[${ts()}] [server] Step 3/3 — loading content modules`)
     await Promise.all([
       skillsMod.init(),
       newsMod.init(),
@@ -191,23 +204,15 @@ async function start() {
       jobsMod.init(),
       mentorsMod.init(),
     ])
-    console.log(`[${ts()}] [server] Step 3/3 — all content modules loaded`)
 
-    clearTimeout(startupTimeout)
-    console.log(`[${ts()}] [server] All data loaded from PostgreSQL ✓\n`)
+    dbReady = true
+    console.log(`[${ts()}] [server] All data loaded from PostgreSQL ✓`)
+    console.log(`[${ts()}] [server] Super Admin: ${process.env.SUPER_ADMIN_EMAIL || 'superadmin@grfw.org'}\n`)
   } catch (err) {
-    clearTimeout(startupTimeout)
-    console.error(`[${ts()}] [server] FATAL: failed during startup initialisation`)
-    console.error(`[${ts()}] [server] Error: ${err.message}`)
+    console.error(`[${ts()}] [server] FATAL: database initialisation failed — ${err.message}`)
     console.error(err.stack)
     process.exit(1)
   }
-
-  app.listen(PORT, () => {
-    console.log(`[${ts()}] [server] GRFW Portal API — http://localhost:${PORT}`)
-    console.log(`[${ts()}] [server] Health: http://localhost:${PORT}/health`)
-    console.log(`[${ts()}] [server] Super Admin: ${process.env.SUPER_ADMIN_EMAIL || 'superadmin@grfw.org'}\n`)
-  })
 }
 
 // Catch any unhandled promise rejections that escape the try/catch above
