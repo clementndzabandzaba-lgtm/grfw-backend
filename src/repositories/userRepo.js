@@ -30,8 +30,8 @@ function userToParams(u) {
     u.subscriptionPlan      || null,
     u.subscriptionExpiry    || null,
     u.rejectionReason       || null,
-    u.createdAt,
-    u.updatedAt             || u.createdAt,
+    u.createdAt             || new Date().toISOString(),
+    u.updatedAt             || u.createdAt || new Date().toISOString(),
     u.widowhoodCategory     || null,
     u.registrationFeePaid   ? 1 : 0,
   ]
