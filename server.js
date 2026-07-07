@@ -173,13 +173,7 @@ async function start() {
   }
 
   // Bind to port FIRST so Railway's health check passes immediately.
-  // Database initialisation runs after — APIs return 503 until ready.
-  let dbReady = false
-  app.use('/api', (req, res, next) => {
-    if (!dbReady) return res.status(503).json({ success: false, error: 'Server starting up, please retry in a few seconds.' })
-    next()
-  })
-
+  // Database initialisation runs after — the module-scope dbReady gate handles 503s.
   await new Promise((resolve) => {
     app.listen(PORT, () => {
       console.log(`[${ts()}] [server] Listening on port ${PORT} — initialising database...`)
