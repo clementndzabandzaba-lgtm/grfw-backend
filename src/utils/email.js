@@ -77,18 +77,12 @@ async function sendResetCode(toEmail, code, name = 'there') {
  * Requires CONTACT_EMAIL_USER and CONTACT_EMAIL_PASS (Gmail App Password) in env.
  */
 async function sendContactEmail({ name, email, country, subject, message }) {
-  const user = process.env.CONTACT_EMAIL_USER
-  const pass = process.env.CONTACT_EMAIL_PASS
-
-  if (!user || !pass) {
-    console.log(`  [CONTACT] Would send email from ${email}: ${subject}  (set CONTACT_EMAIL_USER / CONTACT_EMAIL_PASS to enable)`)
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) {
+    console.log(`  [CONTACT] Would send email from ${email}: ${subject}  (set RESEND_API_KEY to enable)`)
     return { sent: false }
   }
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass },
-  })
+  const resendClient = new Resend(apiKey)
 
   const html = `
     <!DOCTYPE html>
@@ -119,13 +113,17 @@ async function sendContactEmail({ name, email, country, subject, message }) {
   `
 
   try {
-    await transporter.sendMail({
-      from:     `"GRFW Contact Form" <${user}>`,
+    const { error } = await resendClient.emails.send({
+      from:     'GRFW Contact Form <onboarding@resend.dev>',
       to:       'grfwportal@gmail.com',
-      replyTo:  `"${name}" <${email}>`,
+      replyTo:  `${name} <${email}>`,
       subject:  `[GRFW Contact] ${subject}`,
       html,
     })
+    if (error) {
+      console.error(`  Contact email failed: ${error.message}`)
+      return { sent: false, error: error.message }
+    }
     console.log(`  Contact email sent: ${subject} (from ${email})`)
     return { sent: true }
   } catch (err) {
