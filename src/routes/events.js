@@ -77,9 +77,48 @@ router.post('/:id/register', async (req, res) => {
   if (event.registered >= event.capacity) {
     return res.status(409).json({ success: false, error: 'This event is fully booked' })
   }
+
+  const { name = 'Attendee', email } = req.body
   event.registered++
   await repo.update(event).catch((err) => console.error('DB update failed:', err.message))
-  res.json({ success: true, message: 'Registered successfully! Check your email for the event link.', data: event })
+
+  // Send confirmation email if email provided and Resend key is set
+  if (email && process.env.RESEND_API_KEY) {
+    const { Resend } = require('resend')
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const eventDate = new Date(event.date).toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    const html = `
+      <!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f0e8ff;padding:40px 0;margin:0">
+      <div style="max-width:520px;margin:0 auto;background:white;border-radius:20px;overflow:hidden;box-shadow:0 8px 40px rgba(74,0,170,0.12)">
+        <div style="background:linear-gradient(135deg,#1a0042,#4a00aa);padding:32px;text-align:center">
+          <h1 style="color:#d97706;font-size:20px;margin:0;letter-spacing:1px">GRFW</h1>
+          <p style="color:rgba(255,255,255,0.65);font-size:12px;margin:4px 0 0">Global Resilience Foundation for Widows</p>
+        </div>
+        <div style="padding:36px 32px">
+          <h2 style="color:#4a00aa;font-family:Georgia,serif;font-size:22px;margin:0 0 8px">You're Registered!</h2>
+          <p style="color:#6b7280;font-size:14px;margin:0 0 24px">Hi ${name}, your spot is confirmed for:</p>
+          <div style="background:#f5f0ff;border-left:4px solid #4a00aa;border-radius:0 12px 12px 0;padding:20px 24px;margin:0 0 24px">
+            <p style="margin:0 0 8px;font-weight:700;color:#1a0042;font-size:16px">${event.title}</p>
+            <p style="margin:0 0 4px;color:#6b7280;font-size:13px">📅 ${eventDate}</p>
+            <p style="margin:0 0 4px;color:#6b7280;font-size:13px">🕐 ${event.time}</p>
+            <p style="margin:0;color:#6b7280;font-size:13px">📍 ${event.location}</p>
+            ${event.meetingLink ? `<p style="margin:12px 0 0"><a href="${event.meetingLink}" style="color:#4a00aa;font-weight:600;font-size:13px">Join Link: ${event.meetingLink}</a></p>` : ''}
+          </div>
+          <p style="color:#9ca3af;font-size:12px;margin:0">Hosted by <strong>${event.host}</strong>. We look forward to seeing you there!</p>
+        </div>
+        <div style="background:#f9f7ff;padding:16px;text-align:center;border-top:1px solid #ede0ff">
+          <p style="color:#d97706;font-size:11px;margin:0">Empower · Support · Transform · Thrive · grfwportal.net</p>
+        </div>
+      </div></body></html>`
+    resend.emails.send({
+      from: 'GRFW Events <onboarding@resend.dev>',
+      to: email,
+      subject: `You're registered: ${event.title}`,
+      html,
+    }).catch((err) => console.error('Event confirmation email failed:', err.message))
+  }
+
+  res.json({ success: true, message: 'Registered successfully! A confirmation has been sent to your email.', data: event })
 })
 
 // ── DELETE /api/events/:id ───────────────────────────────────────────────────
