@@ -68,8 +68,10 @@ router.get('/:id/view', (req, res) => {
   if (!skill) return res.status(404).json({ success: false, error: 'Skill not found' })
   const filePath = path.join(UPLOAD_DIR, skill.fileName)
   if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, error: 'PDF file not found on server' })
+  const frontendUrl = process.env.FRONTEND_URL || ''
+  const frameAncestors = `'self' http://localhost:3000 http://localhost:3001${frontendUrl ? ` ${frontendUrl}` : ''}`
   res.removeHeader('X-Frame-Options')
-  res.setHeader('Content-Security-Policy', "frame-ancestors 'self' http://localhost:3000 http://localhost:3001")
+  res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors}`)
   res.setHeader('Content-Type', 'application/pdf')
   res.setHeader('Content-Disposition', `inline; filename="${skill.originalName}"`)
   fs.createReadStream(filePath).pipe(res)
