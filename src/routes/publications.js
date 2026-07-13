@@ -57,14 +57,15 @@ router.get('/admin/all', requireAuth, requireRole('admin', 'super_admin'), (_req
 
 // ── GET /api/publications/:id/view ───────────────────────────────────────────
 router.get('/:id/view', (req, res) => {
-  const pub = publications.find((p) => p.id === req.params.id)
-  if (!pub) return res.status(404).json({ success: false, error: 'Publication not found' })
-  const filePath = path.join(UPLOAD_DIR, pub.fileName)
-  if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, error: 'PDF file not found on server' })
   const frontendUrl = process.env.FRONTEND_URL || ''
   const frameAncestors = `'self' http://localhost:3000 http://localhost:3001${frontendUrl ? ` ${frontendUrl}` : ''}`
   res.removeHeader('X-Frame-Options')
   res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors}`)
+
+  const pub = publications.find((p) => p.id === req.params.id)
+  if (!pub) return res.status(404).json({ success: false, error: 'Publication not found' })
+  const filePath = path.join(UPLOAD_DIR, pub.fileName)
+  if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, error: 'PDF file not found on server' })
   res.setHeader('Content-Type', 'application/pdf')
   res.setHeader('Content-Disposition', `inline; filename="${pub.originalName}"`)
   res.setHeader('X-Content-Type-Options', 'nosniff')

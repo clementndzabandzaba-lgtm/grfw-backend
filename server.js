@@ -22,7 +22,7 @@ app.use((req, _res, next) => {
 })
 
 // Middleware
-app.use(helmet({ contentSecurityPolicy: false }))
+app.use(helmet({ contentSecurityPolicy: false, frameguard: false }))
 app.use(cors({
   origin: (origin, callback) => {
     // Allow server-to-server (no origin header), localhost dev, all *.vercel.app deployments,
