@@ -53,9 +53,9 @@ async function seedSuperAdmin() {
 
 // ── Widowhood fee tables (USD — displayed with $ sign) ───────────────────────
 const REGISTRATION_FEES = {
-  new_to_widowhood: 50,
-  mid_widowhood:    100,
-  established:      150,
+  new_to_widowhood: 15,
+  mid_widowhood:    15,
+  established:      15,
 }
 const SUBSCRIPTION_FEES = {
   new_to_widowhood: 30,

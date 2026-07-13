@@ -88,10 +88,10 @@ app.post('/api/contact', async (req, res) => {
   const { sendContactEmail } = require('./src/utils/email')
   const result = await sendContactEmail({ name, email, country, subject, message })
   if (result.sent) {
-    return res.json({ success: true, message: 'Message received — we will reply within 2 business days.' })
+    return res.json({ success: true, message: 'Thank you for reaching out! Your message has been sent successfully.' })
   }
   // Still acknowledge even if email fails (logs show the submission server-side)
-  res.json({ success: true, message: 'Message received — we will reply within 2 business days.' })
+  res.json({ success: true, message: 'Thank you for reaching out! Your message has been sent successfully.' })
 })
 
 // Newsletter

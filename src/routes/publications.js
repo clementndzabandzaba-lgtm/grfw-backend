@@ -74,12 +74,11 @@ router.post('/', requireAuth, requireRole('admin', 'super_admin'), upload.single
   if (!req.file) return res.status(400).json({ success: false, error: 'PDF file is required' })
   const { title, topic, language, description, type, isFree, published } = req.body
   if (!title) { fs.unlinkSync(req.file.path); return res.status(400).json({ success: false, error: 'Title is required' }) }
-  const costNum = parseFloat(req.body.cost) || 0
   const pub = {
     id: uuidv4(), title: title.trim(),
     topic: topic || 'general', language: language || 'English',
     description: description || '', type: type || 'Guide',
-    isFree: isFree !== 'false' && costNum === 0, cost: costNum,
+    isFree: true, cost: 0,
     fileName: req.file.filename, originalName: req.file.originalname,
     fileSize: req.file.size, views: 0,
     published: published !== 'false', uploadedBy: req.user.name,
