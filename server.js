@@ -26,13 +26,16 @@ app.use(helmet({ contentSecurityPolicy: false, frameguard: false }))
 app.use(cors({
   origin: (origin, callback) => {
     // Allow server-to-server (no origin header), localhost dev, all *.vercel.app deployments,
-    // and any explicitly configured FRONTEND_URL.
+    // grfwportal.net and www.grfwportal.net, and any explicitly configured FRONTEND_URL.
+    const allowed = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map((u) => u.trim()) : []
     if (
       !origin ||
       /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
       /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
       origin.endsWith('.vercel.app') ||
-      (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
+      origin === 'https://grfwportal.net' ||
+      origin === 'https://www.grfwportal.net' ||
+      allowed.includes(origin)
     ) {
       return callback(null, true)
     }
