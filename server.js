@@ -101,6 +101,30 @@ app.post('/api/newsletter/subscribe', (req, res) => {
   res.json({ success: true, message: 'Subscribed successfully!' })
 })
 
+// Payments — initialize a Paystack transaction and return redirect URL
+app.post('/api/payments/initialize', async (req, res) => {
+  const { amount, email, name, type, userId, recurring } = req.body
+  if (!amount || !email) return res.status(400).json({ success: false, error: 'amount and email are required.' })
+  const frontendUrl = process.env.FRONTEND_URL || 'https://grfw-frontend.vercel.app'
+  const reference   = `${type || 'don'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  try {
+    const { initializeTransaction } = require('./src/utils/paystack')
+    const result = await initializeTransaction({
+      email,
+      amount:      parseFloat(amount),
+      currency:    'ZAR',
+      reference,
+      metadata:    { name: name || 'User', type: type || 'donation', userId: userId || '', recurring: String(!!recurring) },
+      callbackUrl: `${frontendUrl}/payment/callback`,
+    })
+    if (!result.status) return res.status(400).json({ success: false, error: result.message || 'Could not initialize payment.' })
+    res.json({ success: true, data: { authorizationUrl: result.data.authorization_url, reference } })
+  } catch (err) {
+    console.error('Paystack initialize error:', err.message)
+    res.status(500).json({ success: false, error: 'Could not initialize payment.' })
+  }
+})
+
 // Donations — verify Paystack payment after popup callback
 app.post('/api/payments/verify', async (req, res) => {
   const { reference, type } = req.body
