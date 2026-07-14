@@ -101,37 +101,34 @@ app.post('/api/newsletter/subscribe', (req, res) => {
   res.json({ success: true, message: 'Subscribed successfully!' })
 })
 
-// Donations — initiate PayFast payment
-app.post('/api/finance/donate', (req, res) => {
-  const { amount, name, email, recurring } = req.body
-  if (!amount || amount < 1) return res.status(400).json({ success: false, error: 'Valid amount required.' })
-
-  const { buildPaymentData } = require('./src/utils/payfast')
-  const frontendUrl = process.env.FRONTEND_URL || 'https://grfw-frontend.vercel.app'
-  const backendUrl  = process.env.BACKEND_URL  || 'https://grfw-backend-production.up.railway.app'
-
-  const { fields, url } = buildPaymentData({
-    paymentId:  `don-${Date.now()}`,
-    name:       name || 'Anonymous Donor',
-    email:      email || 'donor@grfw.org',
-    amount,
-    itemName:   `GRFW Donation${recurring ? ' (Monthly)' : ''}`,
-    itemDesc:   'Supporting widows and widowers through GRFW',
-    returnUrl:  `${frontendUrl}/donate/thank-you`,
-    cancelUrl:  `${frontendUrl}/donate`,
-    notifyUrl:  `${backendUrl}/api/finance/donation-itn`,
-  })
-  res.json({ success: true, data: { fields, url } })
+// Donations — verify Paystack payment after popup callback
+app.post('/api/payments/verify', async (req, res) => {
+  const { reference, type } = req.body
+  if (!reference) return res.status(400).json({ success: false, error: 'reference is required.' })
+  try {
+    const { verifyTransaction } = require('./src/utils/paystack')
+    const result = await verifyTransaction(reference)
+    if (!result.status || result.data?.status !== 'success') {
+      return res.status(402).json({ success: false, error: 'Payment not successful.' })
+    }
+    if (type === 'donation') {
+      const amt = (result.data.amount / 100).toFixed(2)
+      console.log(`  Donation: ${result.data.currency} ${amt} from ${result.data.customer?.email}`)
+    }
+    res.json({ success: true, message: 'Payment verified.', data: { amount: result.data.amount / 100, currency: result.data.currency } })
+  } catch (err) {
+    console.error('Paystack verify error:', err.message)
+    res.status(500).json({ success: false, error: 'Could not verify payment.' })
+  }
 })
 
-// Donation ITN — log received payment
-app.post('/api/finance/donation-itn', (req, res) => {
+// Paystack webhook (logs events — main verification done via /api/payments/verify)
+app.post('/api/payments/webhook', (req, res) => {
   res.sendStatus(200)
-  const { verifyItn } = require('./src/utils/payfast')
-  if (!verifyItn(req.body)) { console.warn('Donation ITN signature mismatch'); return }
-  if (req.body.payment_status === 'COMPLETE') {
-    console.log(`  Donation received: R${req.body.amount_gross} from ${req.body.email_address}`)
-  }
+  try {
+    const event = req.body
+    console.log(`  Paystack webhook: ${event.event || 'unknown'}`, event.data?.reference || '')
+  } catch (err) { console.error('Webhook error:', err.message) }
 })
 
 // Records

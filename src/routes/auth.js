@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid')
 const { requireAuth, JWT_SECRET } = require('../middleware/auth')
 const { logAction }    = require('../utils/auditLog')
 const { sendResetCode } = require('../utils/email')
-const { buildPaymentData, verifyItn } = require('../utils/payfast')
+const { verifyTransaction } = require('../utils/paystack')
 const userRepo = require('../repositories/userRepo')
 
 // Shared in-memory user store — write-through cache backed by PostgreSQL.
@@ -386,47 +386,38 @@ router.get('/subscription', requireAuth, (req, res) => {
   })
 })
 
-// POST /api/auth/payfast/initiate-subscription — generate PayFast payment fields
-router.post('/payfast/initiate-subscription', requireAuth, async (req, res) => {
+// POST /api/auth/paystack/initialize-subscription — return reference for Paystack popup
+router.post('/paystack/initialize-subscription', requireAuth, async (req, res) => {
   const user = users.find((u) => u.id === req.user.id)
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
-  if (!['member'].includes(user.role)) return res.status(403).json({ success: false, error: 'Subscriptions are for member accounts only.' })
-
+  if (user.role !== 'member') return res.status(403).json({ success: false, error: 'Subscriptions are for member accounts only.' })
   const amount = subscriptionFee(user.widowhoodCategory)
-  const { fields, url } = buildPaymentData({
-    paymentId:  `sub-${user.id}-${Date.now()}`,
-    name:       user.name,
-    email:      user.email,
-    amount,
-    itemName:   'GRFW Monthly Subscription',
-    itemDesc:   `${CATEGORY_LABELS[user.widowhoodCategory] || 'Member'} — R${amount}/month`,
-    returnUrl:  `${FRONTEND_URL()}/subscribe/success`,
-    cancelUrl:  `${FRONTEND_URL()}/subscribe`,
-    notifyUrl:  `${BACKEND_URL()}/api/auth/payfast/subscription-itn`,
-    customStr1: user.id,
-  })
-  res.json({ success: true, data: { fields, url, amount } })
+  res.json({ success: true, data: { reference: `sub-${user.id}-${Date.now()}`, email: user.email, amount, currency: 'ZAR' } })
 })
 
-// POST /api/auth/payfast/subscription-itn — PayFast ITN webhook
-router.post('/payfast/subscription-itn', async (req, res) => {
-  res.sendStatus(200)  // acknowledge immediately
+// POST /api/auth/paystack/verify-subscription — verifies Paystack transaction and activates subscription
+router.post('/paystack/verify-subscription', requireAuth, async (req, res) => {
+  const { reference } = req.body
+  if (!reference) return res.status(400).json({ success: false, error: 'reference is required.' })
+  const user = users.find((u) => u.id === req.user.id)
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
   try {
-    if (!verifyItn(req.body)) { console.warn('PayFast sub ITN signature mismatch'); return }
-    if (req.body.payment_status !== 'COMPLETE') return
-
-    const userId = req.body.custom_str1
-    const user   = users.find((u) => u.id === userId)
-    if (!user) return
-
+    const result = await verifyTransaction(reference)
+    if (!result.status || result.data?.status !== 'success') {
+      return res.status(402).json({ success: false, error: 'Payment not completed. Please try again.' })
+    }
     const expiry = new Date()
     expiry.setMonth(expiry.getMonth() + 1)
-    user.isSubscribed       = true
-    user.subscriptionPlan   = 'monthly'
+    user.isSubscribed = true
+    user.subscriptionPlan = 'monthly'
     user.subscriptionExpiry = expiry.toISOString()
     await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
     console.log(`  Subscription activated for ${user.email}`)
-  } catch (err) { console.error('Subscription ITN error:', err.message) }
+    res.json({ success: true, message: 'Subscription activated!', data: safeUser(user) })
+  } catch (err) {
+    console.error('Paystack verify error:', err.message)
+    res.status(500).json({ success: false, error: 'Could not verify payment. Please contact support.' })
+  }
 })
 
 // POST /api/auth/cancel-subscription
@@ -438,50 +429,31 @@ router.post('/cancel-subscription', requireAuth, async (req, res) => {
   res.json({ success: true, message: 'Subscription cancelled. You can re-subscribe at any time.' })
 })
 
-// ── Registration PayFast routes ───────────────────────────────────────────────
+// ── Registration payment (Paystack) ──────────────────────────────────────────
 
-// POST /api/auth/payfast/initiate-registration
-router.post('/payfast/initiate-registration', async (req, res) => {
-  const { userId } = req.body
-  if (!userId) return res.status(400).json({ success: false, error: 'userId is required.' })
+// POST /api/auth/paystack/verify-registration — called after Paystack popup succeeds
+router.post('/paystack/verify-registration', async (req, res) => {
+  const { userId, reference } = req.body
+  if (!userId || !reference) return res.status(400).json({ success: false, error: 'userId and reference are required.' })
   const user = users.find((u) => u.id === userId)
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
-  if (user.registrationFeePaid) return res.status(400).json({ success: false, error: 'Registration fee already paid.' })
-
-  const amount = registrationFee(user.widowhoodCategory)
-  const { fields, url } = buildPaymentData({
-    paymentId:  `reg-${user.id}`,
-    name:       user.name,
-    email:      user.email,
-    amount,
-    itemName:   'GRFW Registration Fee',
-    itemDesc:   `${CATEGORY_LABELS[user.widowhoodCategory] || 'Member'} — one-time R${amount}`,
-    returnUrl:  `${FRONTEND_URL()}/auth/payment-success`,
-    cancelUrl:  `${FRONTEND_URL()}/auth/register`,
-    notifyUrl:  `${BACKEND_URL()}/api/auth/payfast/registration-itn`,
-    customStr1: user.id,
-  })
-  res.json({ success: true, data: { fields, url, amount } })
-})
-
-// POST /api/auth/payfast/registration-itn — PayFast webhook activates account
-router.post('/payfast/registration-itn', async (req, res) => {
-  res.sendStatus(200)  // acknowledge immediately
+  if (user.registrationFeePaid) return res.json({ success: true, message: 'Already paid.', data: safeUser(user) })
   try {
-    if (!verifyItn(req.body)) { console.warn('PayFast reg ITN signature mismatch'); return }
-    if (req.body.payment_status !== 'COMPLETE') return
-
-    const userId = req.body.custom_str1
-    const user   = users.find((u) => u.id === userId)
-    if (!user) return
-
-    user.status              = 'pending_admin'  // payment confirmed — now awaits admin approval
+    const result = await verifyTransaction(reference)
+    if (!result.status || result.data?.status !== 'success') {
+      return res.status(402).json({ success: false, error: 'Payment not completed. Please try again.' })
+    }
+    user.status              = 'pending_admin'
     user.registrationFeePaid = true
     user.isVerified          = true
     await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
-    logAction({ actorName: 'PayFast', actorId: 'system', actorRole: 'system', action: 'REGISTRATION_PAID', target: `${user.name} (${user.email})`, risk: 'low' })
-    console.log(`  Registration fee paid — pending admin approval: ${user.email}`)
-  } catch (err) { console.error('Registration ITN error:', err.message) }
+    logAction({ actorName: 'Paystack', actorId: 'system', actorRole: 'system', action: 'REGISTRATION_PAID', target: `${user.name} (${user.email})`, risk: 'low' })
+    console.log(`  Registration paid — pending admin: ${user.email}`)
+    res.json({ success: true, message: 'Payment confirmed! Your application is now under review.', data: safeUser(user) })
+  } catch (err) {
+    console.error('Paystack verify error:', err.message)
+    res.status(500).json({ success: false, error: 'Could not verify payment. Please contact support.' })
+  }
 })
 
 // ── Password Reset ────────────────────────────────────────────────────────────
