@@ -71,6 +71,18 @@ const CATEGORY_LABELS = {
 function registrationFee(category) { return REGISTRATION_FEES[category] || REGISTRATION_FEES.established }
 function subscriptionFee(category) { return SUBSCRIPTION_FEES[category] || SUBSCRIPTION_FEES.established }
 
+// Guards against reusing a cheaper or someone else's Paystack payment to unlock access.
+// (In-memory: resets on restart; the metadata/amount checks below still apply.)
+const usedReferences = new Set()
+function paymentMismatch(tx, { type, userId, amount }) {
+  if (usedReferences.has(tx.reference))             return 'This payment has already been used.'
+  if (tx.currency !== 'ZAR')                        return 'Unexpected payment currency.'
+  if (tx.amount < Math.round(amount * 100))         return 'Payment amount does not match the fee.'
+  if (tx.metadata?.type !== type)                   return 'Payment type does not match.'
+  if (String(tx.metadata?.userId || '') !== String(userId)) return 'Payment does not belong to this account.'
+  return null
+}
+
 const FRONTEND_URL = () => process.env.FRONTEND_URL || 'https://grfw-frontend.vercel.app'
 const BACKEND_URL  = () => process.env.BACKEND_URL  || 'https://grfw-backend-production.up.railway.app'
 
@@ -406,7 +418,12 @@ router.post('/paystack/verify-subscription', requireAuth, async (req, res) => {
     if (!result.status || result.data?.status !== 'success') {
       return res.status(402).json({ success: false, error: 'Payment not completed. Please try again.' })
     }
-    const expiry = new Date()
+    const problem = paymentMismatch(result.data, { type: 'sub', userId: user.id, amount: subscriptionFee(user.widowhoodCategory) })
+    if (problem) return res.status(400).json({ success: false, error: problem })
+    usedReferences.add(reference)
+    // Renewing early extends from the current expiry, so paid days are never lost
+    const current = user.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null
+    const expiry  = current && current > new Date() ? current : new Date()
     expiry.setMonth(expiry.getMonth() + 1)
     user.isSubscribed = true
     user.subscriptionPlan = 'monthly'
@@ -424,9 +441,14 @@ router.post('/paystack/verify-subscription', requireAuth, async (req, res) => {
 router.post('/cancel-subscription', requireAuth, async (req, res) => {
   const user = users.find((u) => u.id === req.user.id)
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' })
-  user.isSubscribed = false; user.subscriptionPlan = null; user.subscriptionExpiry = null
+  // Per the Refund & Cancellation Policy: access continues until the end of the paid month.
+  // Subscriptions never auto-renew, so cancelling just records the intent.
+  user.subscriptionPlan = 'cancelled'
   await userRepo.update(user).catch((err) => console.error('DB update failed:', err.message))
-  res.json({ success: true, message: 'Subscription cancelled. You can re-subscribe at any time.' })
+  const until = user.subscriptionExpiry ? new Date(user.subscriptionExpiry).toDateString() : null
+  res.json({ success: true, message: until
+    ? `Subscription cancelled. You keep access until ${until}. You will not be charged again.`
+    : 'Subscription cancelled. You will not be charged again.' })
 })
 
 // ── Registration payment (Paystack) ──────────────────────────────────────────
@@ -443,6 +465,9 @@ router.post('/paystack/verify-registration', async (req, res) => {
     if (!result.status || result.data?.status !== 'success') {
       return res.status(402).json({ success: false, error: 'Payment not completed. Please try again.' })
     }
+    const problem = paymentMismatch(result.data, { type: 'registration', userId: user.id, amount: registrationFee(user.widowhoodCategory) })
+    if (problem) return res.status(400).json({ success: false, error: problem })
+    usedReferences.add(reference)
     user.status              = 'pending_admin'
     user.registrationFeePaid = true
     user.isVerified          = true
