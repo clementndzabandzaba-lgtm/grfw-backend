@@ -180,7 +180,7 @@ router.get('/analytics', (_req, res) => {
 
 // ── System Config — in-memory store ─────────────────────────────────────────
 let systemConfig = {
-  orgName:      'Global Resilience Foundation for Widows',
+  orgName:      'GRFW Global Resilience Widows Foundation',
   tagline:      'Empower • Support • Transform • Thrive',
   supportEmail: 'hello@grfw.org',
   whatsapp:     '+254700000001',

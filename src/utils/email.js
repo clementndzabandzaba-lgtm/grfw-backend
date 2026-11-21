@@ -28,7 +28,7 @@ async function sendResetCode(toEmail, code, name = 'there') {
       <div style="max-width:480px;margin:0 auto;background:white;border-radius:24px;overflow:hidden;box-shadow:0 8px 40px rgba(74,0,170,0.15)">
         <div style="background:linear-gradient(135deg,#1a0042,#4a00aa);padding:32px;text-align:center">
           <h1 style="color:#d97706;font-size:22px;margin:0;letter-spacing:1px">GRFW</h1>
-          <p style="color:rgba(255,255,255,0.7);font-size:13px;margin:4px 0 0">Global Resilience Foundation for Widows</p>
+          <p style="color:rgba(255,255,255,0.7);font-size:13px;margin:4px 0 0">GRFW Global Resilience Widows Foundation</p>
         </div>
         <div style="padding:40px 32px;text-align:center">
           <h2 style="color:#4a00aa;font-size:20px;margin:0 0 8px">Password Reset Code</h2>
