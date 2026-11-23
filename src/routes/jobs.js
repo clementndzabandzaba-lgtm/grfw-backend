@@ -1,6 +1,6 @@
 const router = require('express').Router()
 const { v4: uuidv4 } = require('uuid')
-const { requireAuth, requireRole } = require('../middleware/auth')
+const { requireAuth, requireRole, requireSubscription } = require('../middleware/auth')
 const { createRepo } = require('../repositories/contentRepo')
 
 const jobsRepo     = createRepo('jobs')
@@ -40,7 +40,7 @@ router.get('/admin/all', requireAuth, requireRole('admin', 'super_admin'), (req,
 })
 
 // ── GET /api/jobs/my/applications ───────────────────────────────────────────
-router.get('/my/applications', requireAuth, (req, res) => {
+router.get('/my/applications', requireAuth, requireSubscription, (req, res) => {
   const userApps = applications.filter((a) => a.userId === req.user.id)
   res.json({ success: true, data: userApps })
 })
@@ -96,7 +96,7 @@ router.delete('/:id', requireAuth, requireRole('admin', 'super_admin'), async (r
 })
 
 // ── POST /api/jobs/:id/apply ────────────────────────────────────────────────
-router.post('/:id/apply', requireAuth, async (req, res) => {
+router.post('/:id/apply', requireAuth, requireSubscription, async (req, res) => {
   const job = jobs.find((j) => j.id === req.params.id)
   if (!job) return res.status(404).json({ success: false, error: 'Job not found' })
   const existing = applications.find((a) => a.userId === req.user.id && a.jobId === req.params.id)

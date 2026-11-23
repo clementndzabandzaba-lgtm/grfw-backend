@@ -51,11 +51,13 @@ async function seedSuperAdmin() {
   }
 }
 
-// ── Widowhood fee tables (USD — displayed with $ sign) ───────────────────────
+// ── Widowhood fee tables (ZAR, charged via Paystack) ─────────────────────────
+// Registration is a flat R50 for everyone; the monthly subscription depends on the category.
+// Keep these in sync with PLANS in frontend/src/lib/org.ts.
 const REGISTRATION_FEES = {
-  new_to_widowhood: 15,
-  mid_widowhood:    15,
-  established:      15,
+  new_to_widowhood: 50,
+  mid_widowhood:    50,
+  established:      50,
 }
 const SUBSCRIPTION_FEES = {
   new_to_widowhood: 30,
@@ -267,6 +269,7 @@ router.patch('/members/:id/status', requireAuth, async (req, res) => {
   const target = users.find((u) => u.id === req.params.id)
   if (!target) return res.status(404).json({ success: false, error: 'Member not found.' })
   if (target.role !== 'member') return res.status(403).json({ success: false, error: 'Admins can only suspend member accounts.' })
+  if (status === 'active' && target.role === 'member' && !target.registrationFeePaid) return res.status(400).json({ success: false, error: 'This member has not paid the R50 registration fee, so the account cannot be activated.' })
   target.status = status
   await userRepo.update(target).catch((err) => console.error('DB update failed:', err.message))
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: status === 'suspended' ? 'SUSPENDED_MEMBER' : 'REACTIVATED_MEMBER', target: `${target.name} (${target.email})`, risk: 'medium' })
@@ -284,7 +287,8 @@ router.post('/admin/add-user', requireAuth, async (req, res) => {
   if (users.find((u) => u.email.toLowerCase() === email.toLowerCase())) return res.status(409).json({ success: false, error: 'An account with that email already exists.' })
 
   const validCategory = ['new_to_widowhood', 'mid_widowhood', 'established'].includes(widowhoodCategory) ? widowhoodCategory : 'established'
-  const status = requestedRole === 'admin' ? 'pending_admin' : 'active'
+  // No free accounts: members added by an admin still pay the R50 registration fee when they first log in.
+  const status = requestedRole === 'admin' ? 'pending_admin' : 'pending_payment'
 
   const newUser = {
     id: uuidv4(), name: name.trim(), email: email.toLowerCase().trim(),
@@ -293,7 +297,7 @@ router.post('/admin/add-user', requireAuth, async (req, res) => {
     avatar: null, profile: {},
     isSubscribed: false, subscriptionPlan: null, subscriptionExpiry: null,
     widowhoodCategory: requestedRole === 'member' ? validCategory : null,
-    registrationFeePaid: true,  // admin-created accounts skip payment
+    registrationFeePaid: requestedRole === 'admin',  // only admins skip payment
     createdAt: new Date().toISOString(), addedBy: caller.name,
   }
   users.push(newUser)
@@ -307,7 +311,7 @@ router.post('/admin/add-user', requireAuth, async (req, res) => {
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: `CREATED_${requestedRole.toUpperCase()}`, target: `${newUser.name} (${newUser.email}) — status: ${status}`, risk: requestedRole === 'admin' ? 'high' : 'low' })
   res.status(201).json({
     success: true,
-    message: requestedRole === 'admin' ? `Admin account created. Approve it from the Approvals page before ${name} can log in.` : 'Member account created and activated.',
+    message: requestedRole === 'admin' ? `Admin account created. Approve it from the Approvals page before ${name} can log in.` : `Member account created. ${name} must pay the R50 registration fee on first login, then be approved and subscribe.`,
     data: safeUser(newUser),
   })
 })
@@ -322,6 +326,7 @@ router.patch('/admin/users/:id/status', requireAuth, async (req, res) => {
   if (!target) return res.status(404).json({ success: false, error: 'User not found.' })
   if (target.id === caller.id) return res.status(400).json({ success: false, error: 'You cannot suspend your own account.' })
   if (target.role === 'super_admin') return res.status(403).json({ success: false, error: 'Cannot modify a super admin account.' })
+  if (status === 'active' && target.role === 'member' && !target.registrationFeePaid) return res.status(400).json({ success: false, error: 'This member has not paid the R50 registration fee, so the account cannot be activated.' })
   target.status = status
   await userRepo.update(target).catch((err) => console.error('DB update failed:', err.message))
   logAction({ actorName: caller.name, actorId: caller.id, actorRole: caller.role, action: status === 'suspended' ? 'SUSPENDED_USER' : 'REACTIVATED_USER', target: `${target.name} (${target.email})`, risk: 'medium' })

@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { requireAuth } = require('../middleware/auth')
+const { requireAuth, requireSubscription } = require('../middleware/auth')
 
 const courses = [
   { id: '1', title: 'Digital Skills for the Modern Workforce', provider: 'GRFW Academy', category: 'digital', duration: '8 weeks', level: 'beginner', cost: 0, isFree: true, deliveryMode: 'online', accredited: true, description: 'Master essential digital tools for the modern workforce.', instructorName: 'Chiamaka Nwosu', rating: 4.9, enrolledCount: 1240, createdAt: '2025-01-10T00:00:00Z' },
@@ -19,7 +19,7 @@ router.get('/', (req, res) => {
   res.json({ success: true, data: result, pagination: { total: result.length, page: 1, totalPages: 1 } })
 })
 
-router.get('/my/enrolments', requireAuth, (req, res) => {
+router.get('/my/enrolments', requireAuth, requireSubscription, (req, res) => {
   const userEnrolments = enrolments.filter((e) => e.userId === req.user.id)
   res.json({ success: true, data: userEnrolments })
 })
@@ -30,7 +30,7 @@ router.get('/:id', (req, res) => {
   res.json({ success: true, data: course })
 })
 
-router.post('/:id/enrol', requireAuth, (req, res) => {
+router.post('/:id/enrol', requireAuth, requireSubscription, (req, res) => {
   const course = courses.find((c) => c.id === req.params.id)
   if (!course) return res.status(404).json({ success: false, error: 'Course not found' })
   const existing = enrolments.find((e) => e.userId === req.user.id && e.courseId === req.params.id)

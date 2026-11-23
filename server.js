@@ -112,9 +112,11 @@ app.post('/api/payments/initialize', async (req, res) => {
   const reference   = `${type || 'don'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   try {
     const { initializeTransaction } = require('./src/utils/paystack')
+    const zarAmount = parseFloat(amount)
+    if (!(zarAmount > 0)) return res.status(400).json({ success: false, error: 'Invalid amount.' })
     const result = await initializeTransaction({
       email,
-      amount:      parseFloat(amount),
+      amount:      zarAmount,
       currency:    'ZAR',
       reference,
       metadata:    { name: name || 'User', type: type || 'donation', userId: userId || '', recurring: String(!!recurring) },

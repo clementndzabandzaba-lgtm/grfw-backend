@@ -1,6 +1,6 @@
 const router = require('express').Router()
 const { v4: uuidv4 } = require('uuid')
-const { requireAuth, requireRole } = require('../middleware/auth')
+const { requireAuth, requireRole, requireSubscription } = require('../middleware/auth')
 const { createRepo } = require('../repositories/contentRepo')
 const { logAction } = require('../utils/auditLog')
 
@@ -28,7 +28,7 @@ router.get('/', (_req, res) => {
 })
 
 // ── POST /api/mentors/apply ──────────────────────────────────────────────────
-router.post('/apply', requireAuth, async (req, res) => {
+router.post('/apply', requireAuth, requireSubscription, async (req, res) => {
   const existing = applications.find((a) => a.userId === req.user.id)
   if (existing) {
     return res.status(409).json({

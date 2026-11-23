@@ -45,6 +45,12 @@ router.patch('/users/:id/role', (req, res) => {
   if ((role === 'admin' || role === 'super_admin') && target.status?.startsWith('pending')) {
     target.status = 'active'
   }
+  // No free accounts: an admin moved to member has never paid, so they pay the R50 registration fee before using the account.
+  if (role === 'member' && oldRole !== 'member') {
+    target.registrationFeePaid = false
+    target.status = 'pending_payment'
+    if (!target.widowhoodCategory) target.widowhoodCategory = 'established'
+  }
   userRepo.update(target)
 
   logAction({
@@ -70,6 +76,7 @@ router.patch('/users/:id/status', (req, res) => {
   if (target.id === req.user.id) {
     return res.status(400).json({ success: false, error: 'You cannot suspend your own account.' })
   }
+  if (status === 'active' && target.role === 'member' && !target.registrationFeePaid) return res.status(400).json({ success: false, error: 'This member has not paid the R50 registration fee, so the account cannot be activated.' })
 
   target.status = status
   userRepo.update(target)
@@ -184,7 +191,7 @@ let systemConfig = {
   tagline:      'Empower • Support • Transform • Thrive',
   supportEmail: 'hello@grfw.org',
   whatsapp:     '+254700000001',
-  defaultCurrency: 'USD',
+  defaultCurrency: 'ZAR',
 }
 
 let featureFlags = [
